@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Runner Game</title>
+    <style>
+        #game {
+            width: 800px;
+            height: 400px;
+            border: 2px solid black;
+            position: relative;
+            overflow: hidden;
+            background: #87CEEB;
+        }
+
+        #character {
+            width: 40px;
+            height: 60px;
+            background: #ff4444;
+            position: absolute;
+            bottom: 0;
+            left: 100px;
+            transition: bottom 0.2s;
+        }
+
+        .obstacle {
+            width: 30px;
+            height: 50px;
+            background: #666;
+            position: absolute;
+            bottom: 0;
+            transition: right 0.1s linear;
+        }
+
+        #score {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-family: Arial, sans-serif;
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game">
+        <div id="score">Score: 0</div>
+        <div id="character"></div>
+    </div>
+    <audio id="backgroundMusic" loop>
+        <!-- For this to work, you need to provide your own audio file -->
+        <source src="background_music.mp3" type="audio/mpeg">
+        Your browser does not support the audio element.
+    </audio>
+
+    <script>
+        const game = document.getElementById('game');
+        const character = document.getElementById('character');
+        const scoreDisplay = document.getElementById('score');
+        const backgroundMusic = document.getElementById('backgroundMusic');
+        
+        let isJumping = false;
+        let score = 0;
+        let gameOver = false;
+        let baseSpeed = 5;
+        let spawnDelay = 2000;
+
+        // Start background music
+        backgroundMusic.volume = 0.5; // Set volume (0.0 to 1.0)
+        backgroundMusic.play().catch(e => {
+            // Autoplay might be blocked, so we can start on first interaction
+            document.addEventListener('keydown', startMusic, { once: true });
+        });
+
+        function startMusic() {
+            backgroundMusic.play();
+        }
+
+        // Jump functionality
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !isJumping && !gameOver) {
+                jump();
+            }
+        });
+
+        function jump() {
+            isJumping = true;
+            character.style.bottom = '150px';
+            
+            setTimeout(() => {
+                character.style.bottom = '0px';
+                isJumping = false;
+            }, 500);
+        }
+
+        function updateDifficulty() {
+            baseSpeed = Math.min(5 + Math.floor(score / 5) * 2, 15);
+            spawnDelay = Math.max(2000 - Math.floor(score / 5) * 200, 500);
+        }
+
+        function createObstacle() {
+            if (gameOver) return;
+
+            const obstacle = document.createElement('div');
+            obstacle.className = 'obstacle';
+            obstacle.style.right = '0px';
+            game.appendChild(obstacle);
+
+            let position = 0;
+            let speed = baseSpeed;
+
+            const moveObstacle = setInterval(() => {
+                if (gameOver) {
+                    clearInterval(moveObstacle);
+                    backgroundMusic.pause();
+                    return;
+                }
+
+                position += speed;
+                obstacle.style.right = position + 'px';
+
+                if (checkCollision(character, obstacle)) {
+                    gameOver = true;
+                    backgroundMusic.pause();
+                    alert(`Game Over! Score: ${score}`);
+                    clearInterval(moveObstacle);
+                    return;
+                }
+
+                if (position > 800) {
+                    obstacle.remove();
+                    score++;
+                    scoreDisplay.textContent = `Score: ${score}`;
+                    updateDifficulty();
+                    clearInterval(moveObstacle);
+                }
+            }, 20);
+
+            setTimeout(createObstacle, Math.random() * spawnDelay + spawnDelay/2);
+        }
+
+        function checkCollision(char, obs) {
+            const charRect = char.getBoundingClientRect();
+            const obsRect = obs.getBoundingClientRect();
+
+            return !(
+                charRect.bottom < obsRect.top ||
+                charRect.top > obsRect.bottom ||
+                charRect.right < obsRect.left ||
+                charRect.left > obsRect.right
+            );
+        }
+
+        // Start game
+        createObstacle();
+    </script>
+</body>
+</html>
