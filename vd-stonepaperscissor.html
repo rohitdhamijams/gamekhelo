@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stone Paper Scissors</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px;
+        }
+        .player {
+            padding: 20px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .score {
+            font-size: 24px;
+            margin: 10px 0;
+        }
+        .hand {
+            font-size: 60px;
+            height: 80px;
+            display: inline-block;
+        }
+        .shaking {
+            animation: shake 0.1s infinite;
+        }
+        @keyframes shake {
+            0% { transform: translate(0, 0) rotate(0deg); }
+            25% { transform: translate(2px, 1px) rotate(1deg); }
+            50% { transform: translate(-2px, -1px) rotate(-1deg); }
+            75% { transform: translate(1px, -2px) rotate(0.5deg); }
+            100% { transform: translate(0, 0) rotate(0deg); }
+        }
+        .instructions {
+            margin: 20px;
+            font-size: 18px;
+        }
+        .result {
+            font-size: 20px;
+            margin: 20px;
+        }
+        #startButton, #restartButton {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #startButton:hover, #restartButton:hover {
+            background-color: #45a049;
+        }
+        #restartButton {
+            display: none;
+        }
+        #videoContainer {
+            margin: 20px;
+            position: relative;
+        }
+        #videoFeed {
+            width: 320px; /* Reverted to original resolution */
+            height: 240px;
+            border: 2px solid #333;
+            border-radius: 5px;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 320px;
+            height: 240px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Stone Paper Scissors</h1>
+    <div class="container">
+        <div class="player">
+            <h2>Human</h2>
+            <div class="hand" id="humanHand">👊</div>
+            <div class="score">Score: <span id="humanScore">0</span></div>
+        </div>
+        <div class="player">
+            <h2>Bot</h2>
+            <div class="hand" id="botHand">👊</div>
+            <div class="score">Score: <span id="botScore">0</span></div>
+        </div>
+    </div>
+    <div class="instructions" id="instructions">
+        Click "Start Game" to begin!
+    </div>
+    <div id="videoContainer" style="display: none;">
+        <video id="videoFeed" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+    </div>
+    <div class="result" id="result"></div>
+    <button id="startButton" onclick="startGame()">Start Game</button>
+    <button id="restartButton" onclick="restartGame()">Restart Game</button>
+    <audio id="backgroundMusic" src="Background for games -Final 1-[AudioTrimmer.com].mp3" loop></audio>
+    <audio id="winSound" src="Win SCP.mp3"></audio>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.min.js"></script>
+
+    <script>
+        const hands = {
+            stone: '👊',
+            paper: '🤚',
+            scissors: '✌️'
+        };
+
+        let humanScore = 0;
+        let botScore = 0;
+        const winningScore = 5;
+        const backgroundMusic = document.getElementById('backgroundMusic');
+        const winSound = document.getElementById('winSound');
+        const restartButton = document.getElementById('restartButton');
+        const startButton = document.getElementById('startButton');
+        const video = document.getElementById('videoFeed');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const humanHand = document.getElementById('humanHand');
+        const botHand = document.getElementById('botHand');
+        let model;
+        let canDetect = false;
+        let gameStarted = false;
+
+        window.onload = async function() {
+            try {
+                model = await handpose.load();
+                console.log("Handpose model loaded successfully.");
+            } catch (err) {
+                console.error("Model loading error: ", err);
+                document.getElementById('instructions').textContent = 
+                    "Failed to load model. Please refresh the page.";
+            }
+        };
+
+        async function startGame() {
+            if (gameStarted) return;
+            gameStarted = true;
+            startButton.style.display = 'none';
+            document.getElementById('videoContainer').style.display = 'block';
+            document.getElementById('instructions').textContent = 
+                'Get ready! Wait for "Shoot" to show your hand: Stone (fist), Paper (flat hand), Scissors (two fingers). Hold your hand 1-2 feet from the camera, steady and centered.';
+
+            try {
+                await startCamera();
+                humanHand.classList.add('shaking');
+                botHand.classList.add('shaking');
+                backgroundMusic.play();
+                startGameLoop();
+                detectHands();
+            } catch (err) {
+                console.error("Initialization error: ", err);
+                document.getElementById('instructions').textContent = 
+                    "Failed to start camera. Use keys: S (Stone), P (Paper), C (Scissors)";
+            }
+        }
+
+        function startCamera() {
+            return new Promise((resolve, reject) => {
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(stream => {
+                        video.srcObject = stream;
+                        video.onloadedmetadata = () => {
+                            console.log("Camera stream started successfully.");
+                            resolve();
+                        };
+                    })
+                    .catch(err => {
+                        console.error("Error accessing camera: ", err);
+                        reject(err);
+                    });
+            });
+        }
+
+        async function detectHands() {
+            if (!video || video.readyState !== 4) {
+                requestAnimationFrame(detectHands);
+                return;
+            }
+
+            const predictions = await model.estimateHands(video);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (predictions.length > 0) {
+                const hand = predictions[0];
+                drawHand(hand);
+                if (canDetect) {
+                    const gesture = detectGesture(hand);
+                    console.log("Detected gesture:", gesture, "Predictions:", predictions.length, "Landmarks:", hand.landmarks);
+                    if (gesture) {
+                        updateGame(gesture);
+                        canDetect = false;
+                    } else {
+                        console.log("Gesture not recognized. Check hand position or lighting.");
+                    }
+                }
+            } else {
+                console.log("No hand detected. Ensure your hand is in view and well-lit.");
+            }
+            requestAnimationFrame(detectHands);
+        }
+
+        function drawHand(hand) {
+            const landmarks = hand.landmarks;
+            ctx.fillStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = 'green';
+
+            landmarks.forEach(([x, y], index) => {
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillText(index, x + 5, y - 5);
+            });
+
+            const fingers = [[0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12], [0, 13, 14, 15, 16], [0, 17, 18, 19, 20]];
+            fingers.forEach(finger => {
+                ctx.beginPath();
+                ctx.moveTo(landmarks[finger[0]][0], landmarks[finger[0]][1]);
+                for (let i = 1; i < finger.length; i++) {
+                    ctx.lineTo(landmarks[finger[i]][0], landmarks[finger[i]][1]);
+                }
+                ctx.stroke();
+            });
+        }
+
+        function detectGesture(hand) {
+            const landmarks = hand.landmarks;
+            const fingerTips = [4, 8, 12, 16, 20]; // Thumb, Index, Middle, Ring, Pinky
+            let extendedFingers = 0;
+
+            // Very lenient finger extension check
+            for (let i = 1; i < fingerTips.length; i++) {
+                const tip = landmarks[fingerTips[i]];
+                const base = landmarks[fingerTips[i] - 2];
+                if (tip[1] < base[1] + 50) extendedFingers++; // Allow more vertical tolerance
+            }
+
+            // Lenient thumb check
+            const thumbTip = landmarks[4];
+            const thumbBase = landmarks[2];
+            const thumbAngle = Math.atan2(thumbTip[1] - thumbBase[1], thumbTip[0] - thumbBase[0]) * (180 / Math.PI);
+            if (thumbAngle > 10) extendedFingers++; // Very relaxed threshold
+
+            console.log("Extended fingers count:", extendedFingers, "Landmarks sample:", landmarks.slice(0, 5));
+
+            // Simplified and lenient gesture classification
+            if (extendedFingers <= 1) return 'stone'; // Fist (few or no extended fingers)
+            if (extendedFingers === 2 && landmarks[8][1] < landmarks[6][1] + 30 && landmarks[12][1] < landmarks[10][1] + 30) return 'scissors'; // Index and Middle
+            if (extendedFingers >= 3) return 'paper'; // Open hand
+
+            return null;
+        }
+
+        function startGameLoop() {
+            if (humanScore >= winningScore || botScore >= winningScore) return;
+
+            humanHand.classList.add('shaking');
+            botHand.classList.add('shaking');
+
+            const speech = new SpeechSynthesisUtterance("Stone, paper, scissors, shoot!");
+            speech.rate = 1.2;
+            speech.onend = () => {
+                humanHand.classList.remove('shaking');
+                botHand.classList.remove('shaking');
+                canDetect = true;
+                console.log("Detection window opened.");
+                setTimeout(() => {
+                    canDetect = false;
+                    console.log("Detection window closed.");
+                    setTimeout(startGameLoop, 1000);
+                }, 2000); // Extended to 2 seconds
+            };
+            window.speechSynthesis.speak(speech);
+        }
+
+        function updateGame(humanChoice) {
+            const botChoice = getBotChoice();
+            humanHand.textContent = hands[humanChoice];
+            botHand.textContent = hands[botChoice];
+
+            const winner = determineWinner(humanChoice, botChoice);
+            let resultText = '';
+
+            if (winner === 'human') {
+                humanScore++;
+                resultText = 'You win this round!';
+                const congratsSpeech = new SpeechSynthesisUtterance("Congratulations, You won!!");
+                window.speechSynthesis.speak(congratsSpeech);
+            } else if (winner === 'bot') {
+                botScore++;
+                resultText = 'Bot wins this round!';
+                const laughSpeech = new SpeechSynthesisUtterance("Ha ha ha ha ha!");
+                laughSpeech.onend = () => {
+                    const winSpeech = new SpeechSynthesisUtterance("I win");
+                    window.speechSynthesis.speak(winSpeech);
+                };
+                window.speechSynthesis.speak(laughSpeech);
+            } else {
+                resultText = "It's a tie!";
+            }
+
+            document.getElementById('humanScore').textContent = humanScore;
+            document.getElementById('botScore').textContent = botScore;
+            document.getElementById('result').textContent = resultText;
+
+            console.log("Scores updated - Human:", humanScore, "Bot:", botScore);
+
+            if (humanScore >= winningScore || botScore >= winningScore) {
+                endGame(humanScore >= winningScore ? 'human' : 'bot');
+            }
+        }
+
+        function getBotChoice() {
+            const choices = ['stone', 'paper', 'scissors'];
+            return choices[Math.floor(Math.random() * 3)];
+        }
+
+        function determineWinner(humanChoice, botChoice) {
+            if (humanChoice === botChoice) return 'tie';
+            if (
+                (humanChoice === 'stone' && botChoice === 'scissors') ||
+                (humanChoice === 'scissors' && botChoice === 'paper') ||
+                (humanChoice === 'paper' && botChoice === 'stone')
+            ) {
+                return 'human';
+            }
+            return 'bot';
+        }
+
+        function endGame(winner) {
+            backgroundMusic.pause();
+            backgroundMusic.currentTime = 0;
+            winSound.play();
+
+            if (winner === 'human') {
+                const congratsSpeech = new SpeechSynthesisUtterance("Congratulations, You won!!");
+                window.speechSynthesis.speak(congratsSpeech);
+                document.getElementById('result').textContent = 'Game Over! You Win!';
+            } else {
+                const laughSpeech = new SpeechSynthesisUtterance("Ha ha ha ha ha!");
+                laughSpeech.onend = () => {
+                    const winSpeech = new SpeechSynthesisUtterance("I win");
+                    window.speechSynthesis.speak(winSpeech);
+                };
+                window.speechSynthesis.speak(laughSpeech);
+                document.getElementById('result').textContent = 'Game Over! Bot Wins!';
+            }
+
+            document.getElementById('instructions').style.display = 'none';
+            restartButton.style.display = 'block';
+            document.removeEventListener('keydown', handleKeyPress);
+        }
+
+        function restartGame() {
+            humanScore = 0;
+            botScore = 0;
+            document.getElementById('humanScore').textContent = 0;
+            document.getElementById('botScore').textContent = 0;
+            humanHand.textContent = hands.stone;
+            botHand.textContent = hands.stone;
+            document.getElementById('result').textContent = '';
+            document.getElementById('instructions').textContent = 
+                'Get ready! Wait for "Shoot" to show your hand: Stone (fist), Paper (flat hand), Scissors (two fingers). Hold your hand 1-2 feet from the camera, steady and centered.';
+            document.getElementById('instructions').style.display = 'block';
+            restartButton.style.display = 'none';
+            backgroundMusic.play();
+            document.addEventListener('keydown', handleKeyPress);
+            startGameLoop();
+        }
+
+        function handleKeyPress(event) {
+            if (!canDetect) return;
+            switch(event.key.toLowerCase()) {
+                case 's':
+                    updateGame('stone');
+                    break;
+                case 'p':
+                    updateGame('paper');
+                    break;
+                case 'c':
+                    updateGame('scissors');
+                    break;
+            }
+        }
+
+        document.addEventListener('keydown', handleKeyPress);
+    </script>
+</body>
+</html>
